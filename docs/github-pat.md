@@ -100,11 +100,12 @@ The CLI forwards `GH_TOKEN` into the container at runtime:
 docker run -it \
   -v /path/to/ro-kubeconfig:/root/.kube/config:ro \
   -e GH_TOKEN="$GH_TOKEN" \
-  copilot-kubectl-enforced:latest
+  ghcr.io/qjoly/copilot-kubectl-enforced:latest
 ```
 
-Inside the container, `gh` picks up `GH_TOKEN` automatically — no
-`gh auth login` step is required.
+Inside the container, the entrypoint script installs the `gh copilot` extension
+automatically using `GH_TOKEN`, then drops you into an interactive shell.
+No token is needed to build the image.
 
 ---
 

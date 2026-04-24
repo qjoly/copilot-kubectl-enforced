@@ -45,10 +45,6 @@ jobs:
             # always update :latest on a release tag
             type=raw,value=latest,enable=true
 
-      # GH_TOKEN is a fine-grained PAT with `copilot_requests: write` stored
-      # as a repository secret. It is passed as a build-arg so the Dockerfile
-      # can install the gh copilot extension at build time.
-      # The token is NOT stored in any image layer.
       - name: Build and push
         id: push
         uses: docker/build-push-action@v6
@@ -58,8 +54,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            GH_TOKEN=${{ secrets.GH_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

@@ -71,6 +71,8 @@ func Pull(runtime, image string) error {
 // Build runs `<runtime> build` in the directory that contains the Dockerfile.
 // It looks for the Dockerfile next to the running binary; if not found it
 // falls back to the current working directory.
+// No build-time secrets are required: the gh copilot extension is installed
+// at container startup via entrypoint.sh using the runtime GH_TOKEN.
 func Build(runtime, image string) error {
 	dockerfilePath, err := findDockerfile()
 	if err != nil {
@@ -78,14 +80,8 @@ func Build(runtime, image string) error {
 	}
 	buildContext := filepath.Dir(dockerfilePath)
 
-	ghToken := os.Getenv("GH_TOKEN")
-	if ghToken == "" {
-		return fmt.Errorf("GH_TOKEN is not set — it is required to bake the gh copilot extension into the image at build time")
-	}
-
 	args := []string{
 		"build",
-		"--build-arg", fmt.Sprintf("GH_TOKEN=%s", ghToken),
 		"-t", image,
 		buildContext,
 	}
