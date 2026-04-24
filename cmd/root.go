@@ -27,6 +27,8 @@ type Config struct {
 	TokenTTL        time.Duration
 	NoCleanup       bool
 	Skills          []string
+	Workdir         string
+	WorkdirReadOnly bool
 }
 
 var cfg Config
@@ -85,6 +87,11 @@ func init() {
 Repeatable; each skill's SKILL.md is fetched from raw.githubusercontent.com and
 installed to /root/.copilot/skills/<name>/ inside the container.
 Requires --build. Example: --skill lobbi-docs/claude/kubernetes`)
+	rootCmd.Flags().StringVar(&cfg.Workdir, "workdir", "",
+		"Mount a host directory into the container at /workspace so the AI can read and modify files.\n"+
+			"Example: --workdir $PWD  (read-write by default; use --workdir-readonly for read-only)")
+	rootCmd.Flags().BoolVar(&cfg.WorkdirReadOnly, "workdir-readonly", false,
+		"Mount the --workdir directory as read-only inside the container")
 }
 
 func run(cmd *cobra.Command, _ []string) error {
@@ -106,6 +113,9 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 	if cfg.Pull && cfg.Build {
 		return fmt.Errorf("--pull and --build are mutually exclusive: choose one")
+	}
+	if cfg.WorkdirReadOnly && cfg.Workdir == "" {
+		return fmt.Errorf("--workdir-readonly requires --workdir to be set")
 	}
 
 	// ---- signal handling -----------------------------------------------
@@ -217,11 +227,20 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	// ---- Run container -------------------------------------------------
 	fmt.Printf("Starting GitHub Copilot CLI (image: %s)…\n", cfg.Image)
+	if cfg.Workdir != "" {
+		access := "read-write"
+		if cfg.WorkdirReadOnly {
+			access = "read-only"
+		}
+		fmt.Printf("Mounting workdir %s → /workspace (%s)\n", cfg.Workdir, access)
+	}
 	fmt.Println("Press Ctrl+C to exit and trigger cleanup.")
 
 	runCfg := container.RunConfig{
-		Image:      cfg.Image,
-		Kubeconfig: cfg.OutKubeconfig,
+		Image:           cfg.Image,
+		Kubeconfig:      cfg.OutKubeconfig,
+		Workdir:         cfg.Workdir,
+		WorkdirReadOnly: cfg.WorkdirReadOnly,
 	}
 
 	if err := ctr.Run(ctx, runCfg); err != nil {

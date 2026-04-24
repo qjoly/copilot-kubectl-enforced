@@ -91,6 +91,19 @@ func (e *execClient) Run(ctx context.Context, cfg RunConfig) error {
 		// '=value' is appended.
 		"-e", "GH_TOKEN",
 	}
+
+	if cfg.Workdir != "" {
+		absWorkdir, err := filepath.Abs(cfg.Workdir)
+		if err != nil {
+			return fmt.Errorf("resolving workdir path: %w", err)
+		}
+		mount := fmt.Sprintf("%s:/workspace", absWorkdir)
+		if cfg.WorkdirReadOnly {
+			mount += ":ro"
+		}
+		args = append(args, "-v", mount)
+	}
+
 	args = append(args, cfg.Image)
 
 	cmd := exec.Command(e.runtime, args...)
