@@ -113,6 +113,17 @@ func (a *apiClient) Build(ctx context.Context, img string, skills []string) erro
 }
 
 // Run creates, attaches to, starts, and waits for an interactive container.
+//
+// Exit detection strategy: we do NOT use ContainerWait because it races with
+// AutoRemove — if the container exits and is removed before the HTTP wait
+// request is processed, the daemon returns 404 and the channel may never fire,
+// leaving the goroutine (and the caller) stuck.
+//
+// Instead we rely on the fact that Docker always closes the hijacked attach
+// connection when the container's PID 1 exits. That EOF propagates through
+// attach.Reader and causes io.Copy to return, closing copyDone. We use
+// copyDone as our sole exit signal, exactly like exec.Command.Wait() works
+// in the exec fallback.
 func (a *apiClient) Run(ctx context.Context, cfg RunConfig) error {
 	absKubeconfig, err := filepath.Abs(cfg.Kubeconfig)
 	if err != nil {
@@ -121,7 +132,7 @@ func (a *apiClient) Run(ctx context.Context, cfg RunConfig) error {
 
 	ghToken := os.Getenv("GH_TOKEN")
 
-	// ---- Create ---------------------------------------------------------
+	// ---- Create (no AutoRemove — we clean up ourselves) -----------------
 	createResp, err := a.cli.ContainerCreate(
 		ctx,
 		&container.Config{
@@ -136,7 +147,6 @@ func (a *apiClient) Run(ctx context.Context, cfg RunConfig) error {
 		},
 		&container.HostConfig{
 			NetworkMode: "host",
-			AutoRemove:  true,
 			Binds:       []string{absKubeconfig + ":/root/.kube/config:ro"},
 		},
 		nil, nil, "",
@@ -146,13 +156,10 @@ func (a *apiClient) Run(ctx context.Context, cfg RunConfig) error {
 	}
 	id := createResp.ID
 
-	// Guard against pre-start failures (AutoRemove only fires after start).
-	started := false
+	// Always remove the container on exit, regardless of how we get there.
 	defer func() {
-		if !started {
-			_ = a.cli.ContainerRemove(context.Background(), id,
-				container.RemoveOptions{Force: true})
-		}
+		_ = a.cli.ContainerRemove(context.Background(), id,
+			container.RemoveOptions{Force: true})
 	}()
 
 	// ---- Attach BEFORE start so no output is missed --------------------
@@ -165,8 +172,8 @@ func (a *apiClient) Run(ctx context.Context, cfg RunConfig) error {
 	if err != nil {
 		return fmt.Errorf("attaching to container: %w", err)
 	}
-	// attach.Close() is called explicitly after ContainerWait so that the
-	// io.Copy goroutines below receive EOF and return promptly.
+	// attach.Close() is called explicitly once we know the container has
+	// exited so that the io.Copy goroutines receive EOF promptly.
 
 	// ---- Raw terminal ---------------------------------------------------
 	inFD := int(os.Stdin.Fd())
@@ -179,7 +186,6 @@ func (a *apiClient) Run(ctx context.Context, cfg RunConfig) error {
 	}
 
 	// ---- Start ----------------------------------------------------------
-	started = true
 	if err := a.cli.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
 		return fmt.Errorf("starting container: %w", err)
 	}
@@ -193,9 +199,8 @@ func (a *apiClient) Run(ctx context.Context, cfg RunConfig) error {
 	}
 
 	// ---- SIGWINCH forwarder goroutine -----------------------------------
-	// resizeCtx has its own cancel so the goroutine exits as soon as the
-	// container stops, even when the parent ctx is not cancelled (i.e. the
-	// container exited naturally rather than via Ctrl-C).
+	// resizeCtx has its own cancel so the goroutine exits as soon as we are
+	// done, regardless of whether the parent ctx was cancelled.
 	resizeCtx, resizeCancel := context.WithCancel(ctx)
 	winchCh := make(chan os.Signal, 1)
 	signal.Notify(winchCh, syscall.SIGWINCH)
@@ -216,44 +221,47 @@ func (a *apiClient) Run(ctx context.Context, cfg RunConfig) error {
 	}()
 
 	// ---- Copy I/O -------------------------------------------------------
-	// In TTY mode the response is a raw stream (no multiplexing header).
+	// In TTY mode the attach stream is raw (no multiplexing header).
+	// copyDone closes when Docker closes the connection — which always
+	// happens as soon as the container's PID 1 exits.
 	copyDone := make(chan struct{})
 	go func() {
 		defer close(copyDone)
 		_, _ = io.Copy(os.Stdout, attach.Reader)
 	}()
 	go func() {
+		// Stdin → container. Leaked after the container exits, but the
+		// write will fail immediately on a closed connection and the
+		// goroutine will exit on its own.
 		_, _ = io.Copy(attach.Conn, os.Stdin)
 	}()
 
-	// ---- Wait -----------------------------------------------------------
-	statusCh, errCh := a.cli.ContainerWait(ctx, id, container.WaitConditionNotRunning)
-
-	var runErr error
+	// ---- Wait for exit --------------------------------------------------
+	// Block until either:
+	//   a) copyDone closes → container's PID 1 exited (natural exit).
+	//   b) ctx is cancelled → Ctrl-C / SIGTERM → stop the container, then
+	//      wait for Docker to close the attach connection.
 	select {
-	case err := <-errCh:
-		if err != nil {
-			runErr = fmt.Errorf("waiting for container: %w", err)
-		}
-	case status := <-statusCh:
-		if status.Error != nil {
-			runErr = fmt.Errorf("container error: %s", status.Error.Message)
-		} else if status.StatusCode != 0 {
-			runErr = fmt.Errorf("container exited with code %d", status.StatusCode)
-		}
+	case <-copyDone:
+		// Container exited; attach connection already closed by Docker.
 	case <-ctx.Done():
 		_ = a.cli.ContainerStop(context.Background(), id, container.StopOptions{})
+		<-copyDone // wait for Docker to close the attach connection
 	}
 
-	// Close the hijacked connection so io.Copy(os.Stdout, attach.Reader)
-	// gets EOF and copyDone closes. Cancel resizeCtx so the SIGWINCH
-	// goroutine exits even when the parent ctx is still live (natural exit).
+	// Unblock secondary goroutines now that I/O is done.
 	attach.Close()
 	resizeCancel()
-
 	signal.Stop(winchCh)
-	<-copyDone
 	<-resizeDone
 
+	// ---- Exit code (best-effort; container may already be gone) ---------
+	var runErr error
+	if info, err := a.cli.ContainerInspect(context.Background(), id); err == nil {
+		if info.State != nil && info.State.ExitCode != 0 {
+			runErr = fmt.Errorf("container exited with code %d", info.State.ExitCode)
+		}
+	}
+	// defer ContainerRemove fires here.
 	return runErr
 }
