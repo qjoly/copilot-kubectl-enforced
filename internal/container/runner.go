@@ -57,17 +57,21 @@ func VerifyImage(image string) error {
 // findDockerfile searches for a Dockerfile next to the running binary, then
 // in the current working directory.
 func findDockerfile() (string, error) {
+	// 1. Next to the running binary.
 	if exe, err := os.Executable(); err == nil {
 		candidate := filepath.Join(filepath.Dir(exe), "Dockerfile")
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil
 		}
 	}
+
+	// 2. Current working directory.
 	if cwd, err := os.Getwd(); err == nil {
 		candidate := filepath.Join(cwd, "Dockerfile")
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil
 		}
 	}
+
 	return "", fmt.Errorf("Dockerfile not found next to the binary or in the current directory; use --build from the project root")
 }

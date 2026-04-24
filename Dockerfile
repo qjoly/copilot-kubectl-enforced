@@ -94,11 +94,11 @@ RUN echo 'echo ""' >> /root/.bashrc \
 # GitHub Copilot discovers personal skills from ~/.copilot/skills/
 # (and also ~/.claude/skills/ and ~/.agents/skills/).
 # ---------------------------------------------------------------------------
-COPY skills.txt /tmp/skills.txt
 ARG SKILLS=""
-RUN set -e; \
-    # Collect skills.txt defaults (strip blank lines and # comments). \
-    FILE_SKILLS="$(grep -v '^\s*#' /tmp/skills.txt | grep -v '^\s*$' || true)"; \
+RUN --mount=type=bind,source=.,target=/build-ctx \
+    set -e; \
+    # Read skills.txt from the build context if present (optional file). \
+    FILE_SKILLS="$(grep -v '^\s*#' /build-ctx/skills.txt 2>/dev/null | grep -v '^\s*$' || true)"; \
     # Append any build-arg extras (convert spaces to newlines). \
     EXTRA_SKILLS="$(echo "$SKILLS" | tr ' ' '\n' | grep -v '^\s*$' || true)"; \
     # Merge, deduplicate, and drop blank lines. \
@@ -119,22 +119,6 @@ RUN set -e; \
         echo "    installed to: /root/.copilot/skills/${SKILL_NAME}/SKILL.md"; \
       done; \
     fi
-
-# ---------------------------------------------------------------------------
-# gh copilot extension — pre-installed at build time (no token needed)
-# Release assets on github.com/github/copilot-cli are public; we download
-# the binary directly so the interactive install prompt never appears at
-# container startup.  Docker buildx sets TARGETARCH to amd64 or arm64.
-# ---------------------------------------------------------------------------
-ARG TARGETARCH=amd64
-RUN mkdir -p /root/.local/share/gh/extensions/gh-copilot /tmp/copilot-extract \
-    && curl -fsSL \
-       "https://github.com/github/copilot-cli/releases/latest/download/copilot-linux-${TARGETARCH}.tar.gz" \
-       | tar -xz -C /tmp/copilot-extract \
-    && find /tmp/copilot-extract -maxdepth 1 -type f \
-       | xargs -I{} mv {} /root/.local/share/gh/extensions/gh-copilot/gh-copilot \
-    && chmod +x /root/.local/share/gh/extensions/gh-copilot/gh-copilot \
-    && rm -rf /tmp/copilot-extract
 
 # ---------------------------------------------------------------------------
 # gh copilot extension — installed at build time via a BuildKit secret mount.

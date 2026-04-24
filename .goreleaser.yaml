@@ -36,6 +36,7 @@ archives:
       - README*
       - LICENSE*
       - Dockerfile
+      - skills.txt
       - docs/**
 
 checksum:
