@@ -66,6 +66,13 @@ brew tap qjoly/tap
 brew install kpil
 ```
 
+**Krew** (kubectl plugin manager):
+
+```sh
+kubectl krew install --manifest-url=https://raw.githubusercontent.com/qjoly/kpil/main/kpil.yaml
+kubectl kpil
+```
+
 **Pre-built binary** (Linux, macOS, Windows — amd64 / arm64):
 
 ```sh
