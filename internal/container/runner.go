@@ -14,7 +14,6 @@ type RunConfig struct {
 	Runtime    string
 	Image      string
 	Kubeconfig string
-	GHToken    string
 	Context    context.Context
 	SignalCh   chan os.Signal
 }
@@ -111,14 +110,14 @@ func Run(cfg RunConfig) error {
 
 	args := []string{
 		"run",
-		"--rm",          // auto-remove the container on exit
-		"-it",           // interactive + allocate TTY
+		"--rm",           // auto-remove the container on exit
+		"-it",            // interactive + allocate TTY
 		"--network=host", // allows kubectl to reach cluster APIs
 		"-v", fmt.Sprintf("%s:/root/.kube/config:ro", absKubeconfig),
-	}
-
-	if cfg.GHToken != "" {
-		args = append(args, "-e", fmt.Sprintf("GH_TOKEN=%s", cfg.GHToken))
+		// Forward GH_TOKEN from the caller's environment without reading its
+		// value in Go. Both Docker and Podman resolve the value from the
+		// calling process env when no '=value' is provided.
+		"-e", "GH_TOKEN",
 	}
 
 	args = append(args, cfg.Image)

@@ -173,21 +173,15 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 
 	// ---- Run container -------------------------------------------------
-	ghToken := os.Getenv("GH_TOKEN")
-	if ghToken == "" {
-		fmt.Fprintln(os.Stderr, "Warning: GH_TOKEN is not set — GitHub Copilot CLI may not be authenticated")
-	}
-
 	fmt.Printf("Starting GitHub Copilot CLI (image: %s)…\n", cfg.Image)
 	fmt.Println("Press Ctrl+C to exit and trigger cleanup.")
 
 	runCfg := container.RunConfig{
-		Runtime:     runtime,
-		Image:       cfg.Image,
-		Kubeconfig:  cfg.OutKubeconfig,
-		GHToken:     ghToken,
-		Context:     ctx,
-		SignalCh:    sigCh,
+		Runtime:    runtime,
+		Image:      cfg.Image,
+		Kubeconfig: cfg.OutKubeconfig,
+		Context:    ctx,
+		SignalCh:   sigCh,
 	}
 
 	if err := container.Run(runCfg); err != nil {
