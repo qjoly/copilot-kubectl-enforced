@@ -22,9 +22,11 @@ type Config struct {
 	Runtime         string
 	Image           string
 	Build           bool
+	Pull            bool
 	InsecureImage   bool
 	TokenTTL        time.Duration
 	NoCleanup       bool
+	Skills          []string
 }
 
 var cfg Config
@@ -66,24 +68,49 @@ func init() {
 	rootCmd.Flags().StringVar(&cfg.Image, "image", "ghcr.io/qjoly/kpil:latest",
 		"Container image name:tag to run (default: published image on ghcr.io)")
 	rootCmd.Flags().BoolVar(&cfg.Build, "build", false,
-		"Build the container image from the local Dockerfile instead of pulling it (requires GH_TOKEN)")
+		"Build the container image from the local Dockerfile instead of pulling it.\n"+
+			"Default skills listed in skills.txt are baked in automatically.\n"+
+			"Use --skill to inject additional skills at build time.")
+	rootCmd.Flags().BoolVar(&cfg.Pull, "pull", false,
+		"Always pull the latest image from the registry before running.\n"+
+			"Fails if the pull fails. Mutually exclusive with --build.")
 	rootCmd.Flags().BoolVar(&cfg.InsecureImage, "insecure-image", false,
 		"Skip cosign signature verification (allows unsigned or locally-built OCI images)")
 	rootCmd.Flags().DurationVar(&cfg.TokenTTL, "token-ttl", 24*time.Hour,
 		"Lifetime of the ServiceAccount token (e.g. 24h, 2h30m)")
 	rootCmd.Flags().BoolVar(&cfg.NoCleanup, "no-cleanup", false,
 		"Skip deleting the kubeconfig and RBAC resources on exit (useful for debugging)")
+	rootCmd.Flags().StringArrayVar(&cfg.Skills, "skill", nil,
+		`Agent skill to bake into the image at build time (format: owner/repo/skill-name).
+Repeatable; each skill's SKILL.md is fetched from raw.githubusercontent.com and
+installed to /root/.copilot/skills/<name>/ inside the container.
+Requires --build. Example: --skill lobbi-docs/claude/kubernetes`)
 }
 
 func run(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// ---- validate GH_TOKEN --------------------------------------------
+	if os.Getenv("GH_TOKEN") == "" {
+		return fmt.Errorf("GH_TOKEN is not set\n"+
+			"  A GitHub personal access token with the 'copilot' scope is required.\n"+
+			"  See docs/github-pat.md for instructions, then re-run with:\n"+
+			"    GH_TOKEN=<your-token> %s", os.Args[0])
+	}
+
+	// ---- validate flag combinations ------------------------------------
+	if len(cfg.Skills) > 0 && !cfg.Build {
+		return fmt.Errorf("--skill requires --build: skills can only be baked into a locally-built image\n" +
+			"  Re-run with: --build --skill <owner/repo/skill-name>")
+	}
+	if cfg.Pull && cfg.Build {
+		return fmt.Errorf("--pull and --build are mutually exclusive: choose one")
+	}
+
 	// ---- signal handling -----------------------------------------------
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	// We pass sigCh to the container runner so it can forward the signal
-	// before cleanup; cancel() is called in the goroutine to stop ctx.
 	go func() {
 		<-sigCh
 		fmt.Fprintln(os.Stderr, "\nSignal received — stopping container…")
@@ -137,26 +164,26 @@ func run(cmd *cobra.Command, _ []string) error {
 		}()
 	}
 
-	// ---- Container runtime ---------------------------------------------
-	runtime, err := container.DetectRuntime(cfg.Runtime)
+	// ---- Container client ----------------------------------------------
+	ctr, err := container.NewClient(cfg.Runtime)
 	if err != nil {
 		return fmt.Errorf("container runtime error: %w", err)
 	}
-	fmt.Printf("Using container runtime: %s\n", runtime)
+	fmt.Printf("Using container backend: %s\n", ctr.Label())
 
 	// ---- Resolve image -------------------------------------------------
-	// Priority:
-	//   1. --build flag → always (re)build from the local Dockerfile.
-	//   2. Image already present locally → use it as-is.
-	//   3. Image not present locally → try to pull from the registry.
-	//   4. Pull fails → tell the user to build it themselves with --build.
 	if cfg.Build {
 		fmt.Printf("Building image %s…\n", cfg.Image)
-		if err := container.Build(runtime, cfg.Image); err != nil {
+		if err := ctr.Build(ctx, cfg.Image, cfg.Skills); err != nil {
 			return fmt.Errorf("image build failed: %w", err)
 		}
+	} else if cfg.Pull {
+		fmt.Printf("Pulling image %s…\n", cfg.Image)
+		if err := ctr.Pull(ctx, cfg.Image); err != nil {
+			return fmt.Errorf("image pull failed: %w", err)
+		}
 	} else {
-		exists, err := container.ImageExists(runtime, cfg.Image)
+		exists, err := ctr.ImageExists(ctx, cfg.Image)
 		if err != nil {
 			return fmt.Errorf("cannot check image existence: %w", err)
 		}
@@ -164,7 +191,7 @@ func run(cmd *cobra.Command, _ []string) error {
 			fmt.Printf("Image %s found locally.\n", cfg.Image)
 		} else {
 			fmt.Printf("Image %s not found locally — attempting to pull…\n", cfg.Image)
-			if pullErr := container.Pull(runtime, cfg.Image); pullErr != nil {
+			if pullErr := ctr.Pull(ctx, cfg.Image); pullErr != nil {
 				return fmt.Errorf(
 					"image %s is not available locally and could not be pulled (%v)\n\n"+
 						"Build it yourself with:\n\n"+
@@ -176,8 +203,6 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 
 	// ---- Verify image signature ----------------------------------------
-	// Skip when the image was built locally (no signature exists) or the user
-	// has explicitly opted out with --insecure-image.
 	switch {
 	case cfg.Build:
 		// Local builds are never signed — no verification possible.
@@ -195,15 +220,11 @@ func run(cmd *cobra.Command, _ []string) error {
 	fmt.Println("Press Ctrl+C to exit and trigger cleanup.")
 
 	runCfg := container.RunConfig{
-		Runtime:    runtime,
 		Image:      cfg.Image,
 		Kubeconfig: cfg.OutKubeconfig,
-		Context:    ctx,
-		SignalCh:   sigCh,
 	}
 
-	if err := container.Run(runCfg); err != nil {
-		// A non-zero exit from the container shell is not a tool error — just report it.
+	if err := ctr.Run(ctx, runCfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Container exited: %v\n", err)
 	}
 
