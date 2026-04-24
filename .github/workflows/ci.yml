@@ -105,6 +105,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          secrets: |
+            gh_token=${{ secrets.GITHUB_TOKEN }}
 
       - name: Sign image
         run: |

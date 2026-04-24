@@ -6,7 +6,12 @@
 # Bakes in:
 #   - gh CLI (GitHub CLI)
 #   - kubectl
-#   - gh copilot extension (pre-installed at build time, no token needed)
+#   - gh copilot extension (when gh_token build secret is provided)
+#
+# The gh copilot extension is installed at build time via a BuildKit secret
+# mount so the token is never written into any image layer. If the secret is
+# absent (e.g. a plain `docker build` without --secret) the step is skipped
+# and entrypoint.sh installs the extension at first run instead.
 #
 # Usage:
 #   docker build -t kpil:latest .
@@ -132,7 +137,29 @@ RUN mkdir -p /root/.local/share/gh/extensions/gh-copilot /tmp/copilot-extract \
     && rm -rf /tmp/copilot-extract
 
 # ---------------------------------------------------------------------------
-# Entrypoint — checks GH_TOKEN and execs gh copilot suggest
+# gh copilot extension — installed at build time via a BuildKit secret mount.
+# The token is read from /run/secrets/gh_token and is never written into any
+# image layer or visible in `docker history`.
+#
+# If the secret is not supplied (plain `docker build` without --secret) the
+# step prints a notice and exits cleanly; entrypoint.sh will install the
+# extension at first run using the runtime GH_TOKEN instead.
+#
+# CI / release workflows pass GITHUB_TOKEN automatically (see .github/).
+# Local builds: `docker build --secret id=gh_token,env=GH_TOKEN …`
+#                or use `kpil --build` which forwards GH_TOKEN for you.
+# ---------------------------------------------------------------------------
+RUN --mount=type=secret,id=gh_token \
+    if GH_TOKEN=$(cat /run/secrets/gh_token 2>/dev/null) && [ -n "$GH_TOKEN" ]; then \
+      echo "Installing gh copilot extension (build time)…"; \
+      gh extension install github/gh-copilot; \
+    else \
+      echo "gh_token secret not provided — extension will be installed at first run."; \
+    fi
+
+# ---------------------------------------------------------------------------
+# Entrypoint — installs the gh copilot extension on first run (using the
+# runtime GH_TOKEN) then launches gh copilot suggest.
 # ---------------------------------------------------------------------------
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
