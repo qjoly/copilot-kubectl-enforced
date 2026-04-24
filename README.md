@@ -161,7 +161,7 @@ The image contains:
 
 - `kubectl` (latest stable at build time)
 - `gh` CLI (latest stable at build time)
-- The `gh copilot` extension is installed at container startup via `GH_TOKEN`
+- `gh copilot` extension (pre-installed at build time — no token needed at build)
 
 The image requires **no token at build time**. `GH_TOKEN` is only needed at runtime and is forwarded automatically from your shell environment.
 
@@ -260,7 +260,7 @@ git push origin v0.1.0
 │   └── container/
 │       └── runner.go              Image detection, pull, build, run, signal forwarding
 ├── Dockerfile                     Node.js 20 + gh CLI + kubectl
-├── entrypoint.sh                  Installs gh copilot at startup, execs gh copilot suggest
+├── entrypoint.sh                  Checks GH_TOKEN and execs gh copilot suggest
 ├── .goreleaser.yaml               Cross-platform binary release config
 ├── .github/workflows/
 │   ├── ci.yml                     CI + edge Docker image

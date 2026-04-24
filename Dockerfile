@@ -6,9 +6,7 @@
 # Bakes in:
 #   - gh CLI (GitHub CLI)
 #   - kubectl
-#
-# The gh copilot extension is installed at container startup via entrypoint.sh
-# using the GH_TOKEN environment variable — no token is needed at build time.
+#   - gh copilot extension (pre-installed at build time, no token needed)
 #
 # Usage:
 #   docker build -t kpil:latest .
@@ -70,7 +68,71 @@ RUN echo 'echo ""' >> /root/.bashrc \
     && echo 'echo ""' >> /root/.bashrc
 
 # ---------------------------------------------------------------------------
-# Entrypoint — installs gh copilot extension at startup using runtime GH_TOKEN
+# Skills — bake agent skills at build time
+#
+# Two sources are merged (duplicates are silently deduplicated):
+#
+#   1. skills.txt  — default skills committed to the repository.
+#                    Each non-blank, non-comment line is an
+#                    "owner/repo/skill-name" spec.
+#
+#   2. SKILLS build-arg — space-separated list of additional specs supplied
+#                         at build time:
+#                           docker build --build-arg SKILLS="owner/repo/skill-name" .
+#                           kpil --build --skill owner/repo/skill-name
+#
+# Every SKILL.md is fetched from:
+#   https://raw.githubusercontent.com/<owner>/<repo>/main/.claude/skills/<skill-name>/SKILL.md
+# and installed to:
+#   /root/.copilot/skills/<skill-name>/SKILL.md
+#
+# GitHub Copilot discovers personal skills from ~/.copilot/skills/
+# (and also ~/.claude/skills/ and ~/.agents/skills/).
+# ---------------------------------------------------------------------------
+COPY skills.txt /tmp/skills.txt
+ARG SKILLS=""
+RUN set -e; \
+    # Collect skills.txt defaults (strip blank lines and # comments). \
+    FILE_SKILLS="$(grep -v '^\s*#' /tmp/skills.txt | grep -v '^\s*$' || true)"; \
+    # Append any build-arg extras (convert spaces to newlines). \
+    EXTRA_SKILLS="$(echo "$SKILLS" | tr ' ' '\n' | grep -v '^\s*$' || true)"; \
+    # Merge, deduplicate, and drop blank lines. \
+    ALL_SKILLS="$(printf '%s\n%s\n' "$FILE_SKILLS" "$EXTRA_SKILLS" \
+                  | sort -u | grep -v '^\s*$' || true)"; \
+    if [ -z "$ALL_SKILLS" ]; then \
+      echo "  No skills configured — skipping skill installation."; \
+    else \
+      echo "$ALL_SKILLS" | while IFS= read -r SKILL_SPEC; do \
+        OWNER=$(echo "$SKILL_SPEC"      | cut -d'/' -f1); \
+        REPO=$(echo  "$SKILL_SPEC"      | cut -d'/' -f2); \
+        SKILL_NAME=$(echo "$SKILL_SPEC" | cut -d'/' -f3); \
+        SKILL_URL="https://raw.githubusercontent.com/${OWNER}/${REPO}/main/.claude/skills/${SKILL_NAME}/SKILL.md"; \
+        echo "  Installing skill: ${SKILL_NAME}"; \
+        echo "    from: ${SKILL_URL}"; \
+        mkdir -p "/root/.copilot/skills/${SKILL_NAME}"; \
+        curl -fsSL "${SKILL_URL}" -o "/root/.copilot/skills/${SKILL_NAME}/SKILL.md"; \
+        echo "    installed to: /root/.copilot/skills/${SKILL_NAME}/SKILL.md"; \
+      done; \
+    fi
+
+# ---------------------------------------------------------------------------
+# gh copilot extension — pre-installed at build time (no token needed)
+# Release assets on github.com/github/copilot-cli are public; we download
+# the binary directly so the interactive install prompt never appears at
+# container startup.  Docker buildx sets TARGETARCH to amd64 or arm64.
+# ---------------------------------------------------------------------------
+ARG TARGETARCH=amd64
+RUN mkdir -p /root/.local/share/gh/extensions/gh-copilot /tmp/copilot-extract \
+    && curl -fsSL \
+       "https://github.com/github/copilot-cli/releases/latest/download/copilot-linux-${TARGETARCH}.tar.gz" \
+       | tar -xz -C /tmp/copilot-extract \
+    && find /tmp/copilot-extract -maxdepth 1 -type f \
+       | xargs -I{} mv {} /root/.local/share/gh/extensions/gh-copilot/gh-copilot \
+    && chmod +x /root/.local/share/gh/extensions/gh-copilot/gh-copilot \
+    && rm -rf /tmp/copilot-extract
+
+# ---------------------------------------------------------------------------
+# Entrypoint — checks GH_TOKEN and execs gh copilot suggest
 # ---------------------------------------------------------------------------
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
