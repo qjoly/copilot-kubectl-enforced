@@ -131,22 +131,35 @@ func (a *apiClient) Run(ctx context.Context, cfg RunConfig) error {
 
 	ghToken := os.Getenv("GH_TOKEN")
 
+	binds := []string{absKubeconfig + ":/root/.kube/config:ro"}
+	binds = append(binds, cfg.ExtraBinds...)
+
+	networkMode := cfg.NetworkMode
+	if networkMode == "" {
+		networkMode = "host"
+	}
+
+	ctrCfg := &container.Config{
+		Image:        cfg.Image,
+		Tty:          true,
+		OpenStdin:    true,
+		StdinOnce:    true,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+		Env:          []string{"GH_TOKEN=" + ghToken},
+	}
+	if cfg.Entrypoint != "" {
+		ctrCfg.Entrypoint = []string{cfg.Entrypoint}
+	}
+
 	// ---- Create (no AutoRemove — we clean up ourselves) -----------------
 	createResp, err := a.cli.ContainerCreate(
 		ctx,
-		&container.Config{
-			Image:        cfg.Image,
-			Tty:          true,
-			OpenStdin:    true,
-			StdinOnce:    true,
-			AttachStdin:  true,
-			AttachStdout: true,
-			AttachStderr: true,
-			Env:          []string{"GH_TOKEN=" + ghToken},
-		},
+		ctrCfg,
 		&container.HostConfig{
-			NetworkMode: "host",
-			Binds:       []string{absKubeconfig + ":/root/.kube/config:ro"},
+			NetworkMode: container.NetworkMode(networkMode),
+			Binds:       binds,
 		},
 		nil, nil, "",
 	)

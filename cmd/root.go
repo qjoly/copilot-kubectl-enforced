@@ -27,6 +27,11 @@ type Config struct {
 	TokenTTL        time.Duration
 	NoCleanup       bool
 	Skills          []string
+	// Interactive setup fields (populated by -i prompt or future flags)
+	Interactive bool
+	NetworkMode string   // network mode for the container (default: "host")
+	ExtraBinds  []string // additional volume mounts in "host:container[:opts]" format
+	Entrypoint  string   // override container entrypoint
 }
 
 var cfg Config
@@ -85,6 +90,10 @@ func init() {
 Repeatable; each skill's SKILL.md is fetched from raw.githubusercontent.com and
 installed to /root/.copilot/skills/<name>/ inside the container.
 Requires --build. Example: --skill lobbi-docs/claude/kubernetes`)
+	rootCmd.Flags().BoolVarP(&cfg.Interactive, "interactive", "i", false,
+		"Prompt for runtime parameters (image, network mode, volume mounts, entrypoint)\n"+
+			"before launching the container.  Non-interactive behaviour is preserved when\n"+
+			"this flag is not set.")
 }
 
 func run(cmd *cobra.Command, _ []string) error {
@@ -106,6 +115,13 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 	if cfg.Pull && cfg.Build {
 		return fmt.Errorf("--pull and --build are mutually exclusive: choose one")
+	}
+
+	// ---- Interactive setup prompt -------------------------------------
+	if cfg.Interactive {
+		if err := promptInteractive(&cfg); err != nil {
+			return fmt.Errorf("interactive setup failed: %w", err)
+		}
 	}
 
 	// ---- signal handling -----------------------------------------------
@@ -220,8 +236,11 @@ func run(cmd *cobra.Command, _ []string) error {
 	fmt.Println("Press Ctrl+C to exit and trigger cleanup.")
 
 	runCfg := container.RunConfig{
-		Image:      cfg.Image,
-		Kubeconfig: cfg.OutKubeconfig,
+		Image:       cfg.Image,
+		Kubeconfig:  cfg.OutKubeconfig,
+		ExtraBinds:  cfg.ExtraBinds,
+		NetworkMode: cfg.NetworkMode,
+		Entrypoint:  cfg.Entrypoint,
 	}
 
 	if err := ctr.Run(ctx, runCfg); err != nil {
