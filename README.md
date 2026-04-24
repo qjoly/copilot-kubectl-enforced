@@ -59,6 +59,13 @@ This means the role works automatically with CRDs and custom API groups without 
 
 ### 1. Install
 
+**Homebrew** (macOS and Linux):
+
+```sh
+brew tap qjoly/tap
+brew install kpil
+```
+
 **Pre-built binary** (Linux, macOS, Windows — amd64 / arm64):
 
 ```sh
