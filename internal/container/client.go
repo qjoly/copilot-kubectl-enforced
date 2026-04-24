@@ -11,8 +11,10 @@ import (
 
 // RunConfig holds what the container runner needs to start the container.
 type RunConfig struct {
-	Image      string
-	Kubeconfig string
+	Image           string
+	Kubeconfig      string
+	Workdir         string // host path to mount as /workspace inside the container (empty = no mount)
+	WorkdirReadOnly bool   // if true the workdir bind is mounted :ro
 }
 
 // Client is the interface both the Docker-SDK backend and the exec fallback
