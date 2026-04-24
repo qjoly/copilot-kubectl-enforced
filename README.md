@@ -53,6 +53,7 @@ This means the role works automatically with CRDs and custom API groups without 
 | A kubeconfig with **cluster-admin** | Used only to provision RBAC |
 | `GH_TOKEN` env var | Fine-grained PAT with `copilot_requests: write` — see [docs/github-pat.md](docs/github-pat.md) |
 | A GitHub Copilot subscription | Required to use the Copilot CLI |
+| `cosign` (optional) | Required for image signature verification — see [docs/cosign.md](docs/cosign.md). Use `--insecure-image` to skip. |
 
 ---
 
@@ -109,6 +110,7 @@ Flags:
       --build            Build the image from the local Dockerfile instead of pulling
       --image string     Container image to run
                          (default "ghcr.io/qjoly/copilot-kubectl-enforced:latest")
+      --insecure-image   Skip cosign signature verification (unsigned or local images)
       --kubeconfig       Admin kubeconfig path
                          (default: $KUBECONFIG or ~/.kube/config)
       --namespace        Namespace for the ServiceAccount  (default "default")
@@ -135,8 +137,11 @@ copilot-kubectl-enforced --image ghcr.io/qjoly/copilot-kubectl-enforced:sha-538c
 # Keep RBAC resources after exit (for debugging)
 copilot-kubectl-enforced --no-cleanup
 
-# Build the image locally instead of pulling
+# Build the image locally instead of pulling (skips signature verification)
 GH_TOKEN=$GH_TOKEN copilot-kubectl-enforced --build
+
+# Use an unsigned or locally-built image (skips cosign verification)
+copilot-kubectl-enforced --insecure-image
 ```
 
 ---
@@ -159,6 +164,24 @@ The image contains:
 - The `gh copilot` extension is installed at container startup via `GH_TOKEN`
 
 The image requires **no token at build time**. `GH_TOKEN` is only needed at runtime and is forwarded automatically from your shell environment.
+
+### Image signatures
+
+Every image published to `ghcr.io` is signed with
+[cosign keyless signing](docs/cosign.md) via GitHub Actions OIDC.  The CLI
+verifies the signature automatically before starting the container — no
+configuration needed as long as `cosign` is in your `PATH`.
+
+```sh
+# Verification happens automatically:
+copilot-kubectl-enforced
+
+# Skip verification for unsigned or locally-built images:
+copilot-kubectl-enforced --insecure-image
+```
+
+See **[docs/cosign.md](docs/cosign.md)** for full details on how signing works,
+manual verification, and troubleshooting.
 
 ### Build locally
 
@@ -210,8 +233,8 @@ go vet ./...
 
 | Workflow | Trigger | Action |
 |---|---|---|
-| `ci.yml` | Push / PR to `main` | Build, vet, GoReleaser check, push `sha-*` + `edge` Docker image |
-| `release.yml` | Push `v*` tag | Push versioned Docker image + create GitHub Release with binaries |
+| `ci.yml` | Push / PR to `main` | Build, vet, GoReleaser check, push `sha-*` + `edge` Docker image, sign image with cosign |
+| `release.yml` | Push `v*` tag | Push versioned Docker image, sign image with cosign, create GitHub Release with binaries |
 
 To cut a release:
 
@@ -243,7 +266,8 @@ git push origin v0.1.0
 │   ├── ci.yml                     CI + edge Docker image
 │   └── release.yml                Versioned release
 └── docs/
-    └── github-pat.md              Fine-grained PAT guide
+    ├── cosign.md              Image signature verification guide
+    └── github-pat.md          Fine-grained PAT guide
 ```
 
 ---
