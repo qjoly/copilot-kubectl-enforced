@@ -178,8 +178,8 @@ func run(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(os.Stderr, "Warning: GH_TOKEN is not set — GitHub Copilot CLI may not be authenticated")
 	}
 
-	fmt.Printf("Starting interactive container %s…\n", cfg.Image)
-	fmt.Println("Type 'exit' or press Ctrl+D to stop the session.")
+	fmt.Printf("Starting GitHub Copilot CLI (image: %s)…\n", cfg.Image)
+	fmt.Println("Press Ctrl+C to exit and trigger cleanup.")
 
 	runCfg := container.RunConfig{
 		Runtime:     runtime,

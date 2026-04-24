@@ -61,13 +61,12 @@ ENV KUBECONFIG=/root/.kube/config
 # is missing).
 RUN mkdir -p /root/.kube
 
-# Friendly shell prompt that shows the Kubernetes context
-RUN echo 'export PS1="[copilot-k8s \$(kubectl config current-context 2>/dev/null || echo no-context)] \w \$ "' \
-        >> /root/.bashrc \
-    && echo 'echo ""' >> /root/.bashrc \
-    && echo 'echo "  kubectl  : $(kubectl version --client --short 2>/dev/null)"' >> /root/.bashrc \
-    && echo 'echo "  gh       : $(gh --version | head -1)"' >> /root/.bashrc \
-    && echo 'echo "  copilot  : $(gh copilot --version 2>/dev/null || echo not installed)"' >> /root/.bashrc \
+# Print a brief banner when the shell is invoked (e.g. via docker exec).
+# The entrypoint goes straight to gh copilot suggest, so .bashrc is only
+# sourced if a user explicitly opens a bash session inside the container.
+RUN echo 'echo ""' >> /root/.bashrc \
+    && echo 'echo "  kubectl : $(kubectl version --client --short 2>/dev/null)"' >> /root/.bashrc \
+    && echo 'echo "  gh      : $(gh --version | head -1)"' >> /root/.bashrc \
     && echo 'echo ""' >> /root/.bashrc
 
 # ---------------------------------------------------------------------------
