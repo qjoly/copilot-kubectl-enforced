@@ -70,11 +70,10 @@ func (a *apiClient) Pull(ctx context.Context, img string) error {
 
 // Build builds the image from the local Dockerfile using the SDK.
 //
-// Note: the Docker SDK does not support BuildKit --secret mounts, so the
-// gh_token secret cannot be forwarded here without leaking it into the image
-// history. The exec-based client (exec.go) uses `--secret id=gh_token,env=GH_TOKEN`
-// and is preferred when GH_TOKEN is set. The SDK path leaves the secret absent;
-// entrypoint.sh will install the gh copilot extension at first run instead.
+// Note: the Docker SDK does not support BuildKit --secret mounts. Since the
+// Dockerfile no longer requires any build-time secrets (the gh copilot
+// extension is downloaded from the public github/gh-copilot release), the SDK
+// and exec-based clients are now equivalent for build purposes.
 func (a *apiClient) Build(ctx context.Context, img string, skills []string) error {
 	dockerfilePath, err := findDockerfile()
 	if err != nil {

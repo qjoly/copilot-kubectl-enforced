@@ -57,9 +57,6 @@ func (e *execClient) Build(_ context.Context, img string, skills []string) error
 
 	args := []string{"build", "-t", img}
 
-	if os.Getenv("GH_TOKEN") != "" {
-		args = append(args, "--secret", "id=gh_token,env=GH_TOKEN")
-	}
 	if len(skills) > 0 {
 		args = append(args, "--build-arg", "SKILLS="+strings.Join(skills, " "))
 	}

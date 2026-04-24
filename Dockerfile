@@ -6,12 +6,11 @@
 # Bakes in:
 #   - gh CLI (GitHub CLI)
 #   - kubectl
-#   - gh copilot extension (when gh_token build secret is provided)
+#   - gh copilot extension (downloaded directly from the public release)
 #
-# The gh copilot extension is installed at build time via a BuildKit secret
-# mount so the token is never written into any image layer. If the secret is
-# absent (e.g. a plain `docker build` without --secret) the step is skipped
-# and entrypoint.sh installs the extension at first run instead.
+# The gh copilot extension binary is fetched from the public
+# github/gh-copilot releases page using plain curl — no token required at
+# build time.
 #
 # Usage:
 #   docker build -t kpil:latest .
@@ -121,33 +120,25 @@ RUN --mount=type=bind,source=.,target=/build-ctx \
     fi
 
 # ---------------------------------------------------------------------------
-# gh copilot extension — installed at build time via a BuildKit secret mount.
-# The token is read from /run/secrets/gh_token and is never written into any
-# image layer or visible in `docker history`.
+# gh copilot extension — downloaded directly from the public release.
+# github/gh-copilot is a public repo; no token is required at build time.
 #
-# If the secret is not supplied (plain `docker build` without --secret) the
-# step prints a notice and exits cleanly; entrypoint.sh will install the
-# extension at first run using the runtime GH_TOKEN instead.
+# The binary is placed at the path that `gh` expects for extensions:
+#   ~/.local/share/gh/extensions/gh-copilot/gh-copilot
 #
-# CI / release workflows pass GITHUB_TOKEN automatically (see .github/).
-# Local builds: `docker build --secret id=gh_token,env=GH_TOKEN …`
-#                or use `kpil --build` which forwards GH_TOKEN for you.
+# TARGETARCH is a predefined BuildKit ARG automatically set to "amd64" or
+# "arm64" in multi-platform builds (buildx). It defaults to "amd64" for
+# plain `docker build` invocations.
 # ---------------------------------------------------------------------------
-RUN --mount=type=secret,id=gh_token \
-    export GH_TOKEN="$(cat /run/secrets/gh_token 2>/dev/null)"; \
-    if [ -z "$GH_TOKEN" ]; then \
-      echo "  gh_token secret not provided — extension will be installed at first run."; \
-    else \
-      echo "  Installing gh copilot extension (build time)…"; \
-      out=$(gh extension install github/gh-copilot 2>&1); rc=$?; \
-      if [ $rc -eq 0 ]; then \
-        echo "  Done."; \
-      elif echo "$out" | grep -qi "built-in\|alias"; then \
-        echo "  gh copilot is already a built-in command — skipping."; \
-      else \
-        printf '%s\n' "$out" >&2; exit $rc; \
-      fi; \
-    fi
+ARG TARGETARCH=amd64
+RUN EXT_DIR="/root/.local/share/gh/extensions/gh-copilot" \
+    && mkdir -p "$EXT_DIR" \
+    && echo "  Downloading gh copilot extension (linux-${TARGETARCH})…" \
+    && curl -fsSL \
+        "https://github.com/github/gh-copilot/releases/download/v1.2.0/linux-${TARGETARCH}" \
+        -o "${EXT_DIR}/gh-copilot" \
+    && chmod +x "${EXT_DIR}/gh-copilot" \
+    && echo "  Installed to ${EXT_DIR}/gh-copilot"
 
 # ---------------------------------------------------------------------------
 # Entrypoint — installs the gh copilot extension on first run (using the
