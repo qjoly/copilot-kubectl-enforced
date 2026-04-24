@@ -7,8 +7,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
-  packages: write   # push to ghcr.io (push to main only)
+  contents: read   # restrictive default; docker job overrides below
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -64,6 +63,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build]          # only push if the Go build is green
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      packages: write    # push to ghcr.io
+      id-token: write    # keyless cosign signing (OIDC token)
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -78,6 +80,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -90,6 +95,7 @@ jobs:
             type=raw,value=edge
 
       - name: Build and push
+        id: push
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -99,3 +105,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Sign image
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}

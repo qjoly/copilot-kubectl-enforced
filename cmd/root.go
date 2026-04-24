@@ -22,6 +22,7 @@ type Config struct {
 	Runtime         string
 	Image           string
 	Build           bool
+	InsecureImage   bool
 	TokenTTL        time.Duration
 	NoCleanup       bool
 }
@@ -66,6 +67,8 @@ func init() {
 		"Container image name:tag to run (default: published image on ghcr.io)")
 	rootCmd.Flags().BoolVar(&cfg.Build, "build", false,
 		"Build the container image from the local Dockerfile instead of pulling it (requires GH_TOKEN)")
+	rootCmd.Flags().BoolVar(&cfg.InsecureImage, "insecure-image", false,
+		"Skip cosign signature verification (allows unsigned or locally-built OCI images)")
 	rootCmd.Flags().DurationVar(&cfg.TokenTTL, "token-ttl", 24*time.Hour,
 		"Lifetime of the ServiceAccount token (e.g. 24h, 2h30m)")
 	rootCmd.Flags().BoolVar(&cfg.NoCleanup, "no-cleanup", false,
@@ -169,6 +172,21 @@ func run(cmd *cobra.Command, _ []string) error {
 					cfg.Image, pullErr, os.Args[0],
 				)
 			}
+		}
+	}
+
+	// ---- Verify image signature ----------------------------------------
+	// Skip when the image was built locally (no signature exists) or the user
+	// has explicitly opted out with --insecure-image.
+	switch {
+	case cfg.Build:
+		// Local builds are never signed — no verification possible.
+	case cfg.InsecureImage:
+		fmt.Fprintln(os.Stderr, "Warning: --insecure-image set — skipping cosign signature verification.")
+	default:
+		fmt.Println("Verifying image signature (cosign)…")
+		if err := container.VerifyImage(cfg.Image); err != nil {
+			return fmt.Errorf("image verification failed:\n  %w", err)
 		}
 	}
 
