@@ -80,11 +80,16 @@ func (e *execClient) Run(ctx context.Context, cfg RunConfig) error {
 		return fmt.Errorf("resolving kubeconfig path: %w", err)
 	}
 
+	networkMode := cfg.NetworkMode
+	if networkMode == "" {
+		networkMode = "host"
+	}
+
 	args := []string{
 		"run",
 		"--rm",
 		"-it",
-		"--network=host",
+		"--network=" + networkMode,
 		"-v", fmt.Sprintf("%s:/root/.kube/config:ro", absKubeconfig),
 		// Forward GH_TOKEN without reading its value in Go — both Docker and
 		// Podman resolve the value from the calling process env when no
@@ -102,6 +107,14 @@ func (e *execClient) Run(ctx context.Context, cfg RunConfig) error {
 			mount += ":ro"
 		}
 		args = append(args, "-v", mount)
+	}
+
+	for _, bind := range cfg.ExtraBinds {
+		args = append(args, "-v", bind)
+	}
+
+	if cfg.Entrypoint != "" {
+		args = append(args, "--entrypoint", cfg.Entrypoint)
 	}
 
 	args = append(args, cfg.Image)

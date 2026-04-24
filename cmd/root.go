@@ -29,6 +29,11 @@ type Config struct {
 	Skills          []string
 	Workdir         string
 	WorkdirReadOnly bool
+	// Interactive setup fields (populated by -i prompt or future flags)
+	Interactive bool
+	NetworkMode string   // network mode for the container (default: "host")
+	ExtraBinds  []string // additional volume mounts in "host:container[:opts]" format
+	Entrypoint  string   // override container entrypoint
 }
 
 var cfg Config
@@ -92,6 +97,10 @@ Requires --build. Example: --skill lobbi-docs/claude/kubernetes`)
 			"Example: --workdir $PWD  (read-write by default; use --workdir-readonly for read-only)")
 	rootCmd.Flags().BoolVar(&cfg.WorkdirReadOnly, "workdir-readonly", false,
 		"Mount the --workdir directory as read-only inside the container")
+	rootCmd.Flags().BoolVarP(&cfg.Interactive, "interactive", "i", false,
+		"Prompt for runtime parameters (image, network mode, volume mounts, entrypoint)\n"+
+			"before launching the container.  Non-interactive behaviour is preserved when\n"+
+			"this flag is not set.")
 }
 
 func run(cmd *cobra.Command, _ []string) error {
@@ -116,6 +125,13 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 	if cfg.WorkdirReadOnly && cfg.Workdir == "" {
 		return fmt.Errorf("--workdir-readonly requires --workdir to be set")
+	}
+
+	// ---- Interactive setup prompt -------------------------------------
+	if cfg.Interactive {
+		if err := promptInteractive(&cfg); err != nil {
+			return fmt.Errorf("interactive setup failed: %w", err)
+		}
 	}
 
 	// ---- signal handling -----------------------------------------------
@@ -241,6 +257,9 @@ func run(cmd *cobra.Command, _ []string) error {
 		Kubeconfig:      cfg.OutKubeconfig,
 		Workdir:         cfg.Workdir,
 		WorkdirReadOnly: cfg.WorkdirReadOnly,
+		ExtraBinds:      cfg.ExtraBinds,
+		NetworkMode:     cfg.NetworkMode,
+		Entrypoint:      cfg.Entrypoint,
 	}
 
 	if err := ctr.Run(ctx, runCfg); err != nil {
